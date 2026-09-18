@@ -1,0 +1,51 @@
+name: Feature request
+description: Propose a change in behaviour or configuration for pi-work-guard.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Describe the problem first. A proposal that starts from a concrete situation is easier to
+        evaluate than one that starts from a solution.
+  - type: textarea
+    id: problem
+    attributes:
+      label: The situation that needs help
+      description: What happens today, in a real session, that this project should handle better.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you would like it to do
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you considered
+      description: Configuration, a different trigger, or doing nothing. Write "none" if you have
+        none.
+    validations:
+      required: true
+  - type: dropdown
+    id: scope
+    attributes:
+      label: What does this change touch?
+      options:
+        - A reminder or its wording
+        - When a turn is forced
+        - Configuration
+        - Reading session state
+        - Something else
+    validations:
+      required: true
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing issues for the same proposal.
+          required: true
+        - label: I removed credentials, private paths and real task text from this request.
+          required: true

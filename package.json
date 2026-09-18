@@ -1,0 +1,52 @@
+{
+  "name": "pi-work-guard",
+  "version": "0.1.0",
+  "private": false,
+  "description": "Pi extension that keeps the task list current across a long session and refuses silent stops.",
+  "type": "module",
+  "license": "MIT",
+  "repository": "https://github.com/Yivas/pi-work-guard",
+  "bugs": "https://github.com/Yivas/pi-work-guard/issues",
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "pi-coding-agent",
+    "task-tracking",
+    "agent-discipline"
+  ],
+  "files": [
+    "src",
+    "README.md",
+    "CHANGELOG.md",
+    "CONTRIBUTING.md",
+    "CODE_OF_CONDUCT.md",
+    "LICENSE",
+    "SECURITY.md"
+  ],
+  "scripts": {
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "node --experimental-strip-types --test test/*.test.ts",
+    "build": "tsc -p tsconfig.build.json",
+    "pack:check": "npm pack --dry-run"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": ">=0.84.3"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "0.85.1",
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^26.6.1",
+    "eslint": "^10.9.1",
+    "prettier": "^3.0.0",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.68.0"
+  },
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  }
+}

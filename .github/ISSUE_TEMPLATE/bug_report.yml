@@ -1,0 +1,70 @@
+name: Bug report
+description: Something in pi-work-guard did not behave as documented.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. Please remove personal paths, session identifiers and real task
+        subjects before submitting. For vulnerabilities, use SECURITY.md instead of this form.
+  - type: input
+    id: version
+    attributes:
+      label: pi-work-guard version
+      description: From package.json, or the commit you installed.
+      placeholder: 0.1.0
+    validations:
+      required: true
+  - type: input
+    id: pi-version
+    attributes:
+      label: Pi version
+      placeholder: 0.85.1
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Operating system and Node.js version
+      placeholder: Windows 11, Node.js 22.11.0
+    validations:
+      required: true
+  - type: textarea
+    id: config
+    attributes:
+      label: work-guard.json
+      description: Paste the file, or write "defaults" if you never created it.
+      render: json
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: observed
+    attributes:
+      label: What happened instead
+      description: Include the relevant lines from the session transcript if you have them.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Smallest way to reproduce it
+      description: A short session, an invented task list and the steps that trigger the problem.
+    validations:
+      required: true
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing issues for the same problem.
+          required: true
+        - label: I removed credentials, private paths and real task text from this report.
+          required: true
+        - label: This is not a security vulnerability.
+          required: true
