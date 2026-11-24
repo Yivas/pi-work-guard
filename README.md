@@ -27,18 +27,15 @@ decision stays with the agent and with you.
 
 ## Status
 
-Version 0.1.0. The extension is new and its behaviour may change between releases; see
-[CHANGELOG.md](CHANGELOG.md).
+Unreleased draft. The extension has not been verified in a live Pi session yet, no tag exists, and
+its behaviour may change without notice until the first release; see [CHANGELOG.md](CHANGELOG.md).
 
 Requires Pi 0.84.3 or newer. It has no runtime dependencies and no network access.
 
 ## Install
 
-```bash
-pi install git:github.com/Yivas/pi-work-guard
-```
-
-From a local checkout:
+There is no tagged release and no published version yet, so the extension can only be installed
+from a local checkout:
 
 ```bash
 pi install /path/to/pi-work-guard
@@ -86,7 +83,8 @@ The file is optional; these are the defaults:
 
 The extension recomputes everything from the session itself. It has no counters to fall out of sync:
 
-- the task list comes from the last `todo` tool result in the current branch, so branching and
+- the task list comes from the last `todo` tool result in the current branch, or from the
+  `rpiv-todo-state` entry a call routed through another tool leaves behind, so branching and
   reloading are handled for free;
 - steps are counted from that result to the end of the branch;
 - when a Pi goal is active, the extension stays out of the way: the goal already continues the work,
@@ -98,9 +96,13 @@ name or shape means the extension stays silent rather than guessing.
 ## Security and privacy
 
 - No network access, no telemetry, no analytics.
-- The only file it writes is its own configuration under the agent directory.
+- It writes its own configuration under the agent directory, and appends entries of its own to the
+  current session: one `custom_message` per notice, and a `work-guard-state` counter entry when it
+  forces a turn.
 - To report inherited work, it reads the newest previous session file of the same working directory
-  and extracts just the last task list; message text is never read into memory or displayed.
+  and extracts just the last task list; no other message text is kept or displayed. The read is
+  bounded: it stops after 8 MiB per file, and the line reader buffers one complete line before the
+  4 MiB per-line cap is applied, so a single very long line is materialised once.
 - It runs with your permissions inside Pi. It never blocks a tool call, so a misconfigured threshold
   cannot stop your work.
 
@@ -111,6 +113,7 @@ name or shape means the extension stays silent rather than guessing.
 - Reminders compete for your attention; `maxForcedTurns` and `/work-guard off` exist for that reason.
 - A forced turn only happens in an interactive session. In print and JSON modes the extension only
   adds reminders.
+- A previous session file above the read cap yields no inherited-work notice.
 - It watches a tool named `todo`. An agent that tracks work anywhere else gets no help from it.
 
 ## Support and contributing
