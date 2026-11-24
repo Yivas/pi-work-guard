@@ -7,7 +7,9 @@
  *
  * The bounds are real but not absolute, and the wording here is the honest limit: the line reader
  * buffers one complete line before the per-line cap can be checked, so a single very long line is
- * materialised once, and a file above the total cap stops being read and yields no notice.
+ * materialised once. A file above the total cap yields no list at all: reading stops there, and a
+ * list seen before the cap is dropped, because a list the file contradicts later is worse than no
+ * notice.
  */
 
 import { createReadStream } from "node:fs";
@@ -16,7 +18,7 @@ import { join } from "node:path";
 import { createInterface } from "node:readline";
 
 import type { TodoItem } from "./guard.ts";
-import { parseTodoDetails, type SessionFileCandidate } from "./state.ts";
+import { parseTodoDetails, TODO_STATE_ENTRY_TYPE, type SessionFileCandidate } from "./state.ts";
 
 const TODO_TOOL_NAME = "todo";
 /** A single line above this size is skipped instead of parsed. */
@@ -28,11 +30,18 @@ export const MAX_SESSION_FILES = 50;
 
 interface JsonLine {
   type?: string;
+  customType?: string;
+  data?: unknown;
   message?: { role?: string; toolName?: string; details?: unknown };
 }
 
+/**
+ * Task list carried by one line, or null when it carries none. Both carriers `rpiv-todo` writes
+ * are read, as on a live branch: the `todo` tool result and the `rpiv-todo-state` entry a call
+ * routed through another tool leaves without a `toolResult`.
+ */
 function detailsFromLine(line: string): TodoItem[] | null {
-  if (!line.includes(`"${TODO_TOOL_NAME}"`)) {
+  if (!line.includes(`"${TODO_TOOL_NAME}"`) && !line.includes(`"${TODO_STATE_ENTRY_TYPE}"`)) {
     return null;
   }
   let parsed: JsonLine;
@@ -40,6 +49,9 @@ function detailsFromLine(line: string): TodoItem[] | null {
     parsed = JSON.parse(line) as JsonLine;
   } catch {
     return null;
+  }
+  if (parsed.type === "custom") {
+    return parsed.customType === TODO_STATE_ENTRY_TYPE ? parseTodoDetails(parsed.data) : null;
   }
   const message = parsed.message;
   if (parsed.type !== "message" || message?.role !== "toolResult") {
@@ -64,6 +76,7 @@ export async function readLastTodoDetails(path: string): Promise<TodoItem[] | nu
       const lineBytes = Buffer.byteLength(line, "utf8");
       totalBytes += lineBytes;
       if (totalBytes > MAX_FILE_BYTES) {
+        latest = null;
         break;
       }
       if (lineBytes > MAX_LINE_BYTES) {

@@ -107,6 +107,57 @@ test("readLastTodoDetails stays silent once the total byte cap is exceeded", asy
   });
 });
 
+test("readLastTodoDetails drops a list read before the total cap was reached", async () => {
+  await withTempDir(async (dir) => {
+    const path = join(dir, "session.jsonl");
+    const filler = `${messageLine("z".repeat(64 * 1024))}\n`;
+    const pastCap = filler.repeat(Math.ceil(MAX_FILE_BYTES / filler.length) + 1);
+    await writeFile(path, `${todoLine(8, "in_progress")}\n${pastCap}`, "utf8");
+
+    assert.equal(await readLastTodoDetails(path), null);
+  });
+});
+
+test("readLastTodoDetails reads the rpiv-todo-state entry of a routed call", async () => {
+  await withTempDir(async (dir) => {
+    const path = join(dir, "session.jsonl");
+    const stateLine = JSON.stringify({
+      type: "custom",
+      customType: "rpiv-todo-state",
+      data: { action: "update", tasks: [{ id: 11, subject: "Routed", status: "in_progress" }] },
+    });
+    await writeFile(path, [messageLine("working"), stateLine, ""].join("\n"), "utf8");
+
+    assert.deepEqual(await readLastTodoDetails(path), [
+      { id: 11, subject: "Routed", status: "in_progress" },
+    ]);
+  });
+});
+
+test("readLastTodoDetails ignores another custom entry and an error result", async () => {
+  await withTempDir(async (dir) => {
+    const path = join(dir, "session.jsonl");
+    await writeFile(
+      path,
+      [
+        JSON.stringify({ type: "custom", customType: "goal-state", data: { goal: null } }),
+        JSON.stringify({
+          type: "message",
+          message: {
+            role: "toolResult",
+            toolName: "todo",
+            details: { tasks: [{ id: 3, subject: "Task 3", status: "pending" }], error: "#9 not" },
+          },
+        }),
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+
+    assert.equal(await readLastTodoDetails(path), null);
+  });
+});
+
 test("readLastTodoDetails only reads entries that look like a todo tool result", async () => {
   await withTempDir(async (dir) => {
     const path = join(dir, "session.jsonl");
