@@ -15,8 +15,8 @@ While a task list has open items, the extension:
 
 - keeps a short reminder in the system prompt, so the working rule stays visible even in a very long
   conversation that never compacts;
-- injects a note when the list has not been touched for a number of agent steps, naming the open
-  items;
+- injects a note when the list has not been touched for a number of agent steps (one step is one
+  assistant message that called at least one tool), naming the open items;
 - re-injects the open items right after compaction, when the habit is measurably lost;
 - tells a new session what the previous session left unfinished, as information only;
 - when the agent goes idle with an item still `in_progress` and at least three agent steps have
@@ -89,7 +89,8 @@ entry:
 - the task list comes from the last `todo` tool result in the current branch, or from the
   `rpiv-todo-state` entry a call routed through another tool leaves behind, so branching and
   reloading are handled for free;
-- steps are counted from that update to the end of the branch;
+- steps are counted from that update to the end of the branch; a step is one assistant message that
+  called at least one tool, so a message with several parallel calls is one step;
 - a forced turn needs at least three of those steps. Marking an item and settling in the same turn is
   the normal way to work, so it never triggers one; the reminder is for the turn that did the work
   and left the item open;

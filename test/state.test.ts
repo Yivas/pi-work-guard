@@ -21,6 +21,17 @@ const assistantTurn = (): SessionEntryLike => ({
   message: { role: "assistant", content: [{ type: "toolCall", name: "read" }] },
 });
 
+const assistantParallelTurn = (): SessionEntryLike => ({
+  type: "message",
+  message: {
+    role: "assistant",
+    content: [
+      { type: "toolCall", name: "read" },
+      { type: "toolCall", name: "edit" },
+    ],
+  },
+});
+
 const assistantText = (): SessionEntryLike => ({
   type: "message",
   message: { role: "assistant", content: [{ type: "text", text: "Working on it" }] },
@@ -202,6 +213,16 @@ test("countStepsAfter counts only assistant turns with tool calls", () => {
 
   assert.equal(countStepsAfter(entries, 0), 2);
   assert.equal(countStepsAfter(entries, -1), 0);
+});
+
+test("countStepsAfter counts one message with parallel tool calls as one step", () => {
+  const entries: SessionEntryLike[] = [
+    todoResult({ tasks: [] }),
+    assistantParallelTurn(),
+    assistantTurn(),
+  ];
+
+  assert.equal(countStepsAfter(entries, 0), 2);
 });
 
 test("isGoalActive reads the real pi-goal payload", () => {

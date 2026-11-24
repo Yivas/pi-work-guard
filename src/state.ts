@@ -167,7 +167,12 @@ function isToolCallTurn(entry: SessionEntryLike): boolean {
   return message.content.some((block) => asRecord(block)?.type === "toolCall");
 }
 
-/** Counts agent steps that happened after the entry at `index`. */
+/**
+ * Counts agent steps that happened after the entry at `index`.
+ *
+ * A step is one assistant message that called at least one tool, so a message with several parallel
+ * calls is a single step: the unit is the turn the agent took, not the number of tools it used.
+ */
 export function countStepsAfter(entries: readonly SessionEntryLike[], index: number): number {
   if (index < 0) {
     return 0;
