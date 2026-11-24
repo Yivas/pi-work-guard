@@ -19,8 +19,9 @@ While a task list has open items, the extension:
   items;
 - re-injects the open items right after compaction, when the habit is measurably lost;
 - tells a new session what the previous session left unfinished, as information only;
-- when the agent goes idle with an item still `in_progress`, asks for an explicit decision — keep
-  working, close it with evidence, or declare a handoff — instead of letting the turn end quietly.
+- when the agent goes idle with an item still `in_progress` and at least three agent steps have
+  happened since the last list update, asks for an explicit decision — keep working, close it with
+  evidence, or declare a handoff — instead of letting the turn end quietly.
 
 The extension never blocks a tool and never edits your task list. It can only remind, and the
 decision stays with the agent and with you.
@@ -81,12 +82,17 @@ The file is optional; these are the defaults:
 
 ## How it decides
 
-The extension recomputes everything from the session itself. It has no counters to fall out of sync:
+The extension recomputes the task list and the step count from the session itself. The only counter
+it persists is the forced-turn one, and that lives in the session too, as a `work-guard-state`
+entry:
 
 - the task list comes from the last `todo` tool result in the current branch, or from the
   `rpiv-todo-state` entry a call routed through another tool leaves behind, so branching and
   reloading are handled for free;
-- steps are counted from that result to the end of the branch;
+- steps are counted from that update to the end of the branch;
+- a forced turn needs at least three of those steps. Marking an item and settling in the same turn is
+  the normal way to work, so it never triggers one; the reminder is for the turn that did the work
+  and left the item open;
 - when a Pi goal is active, the extension stays out of the way: the goal already continues the work,
   so no turn is forced and only reminders remain.
 
@@ -114,7 +120,8 @@ name or shape means the extension stays silent rather than guessing.
 - A forced turn only happens in an interactive session. In print and JSON modes the extension only
   adds reminders.
 - A previous session file above the read cap yields no inherited-work notice.
-- It watches a tool named `todo`. An agent that tracks work anywhere else gets no help from it.
+- It watches a tool named `todo`, plus the `rpiv-todo-state` entries `rpiv-todo` writes for calls
+  routed through another tool. An agent that tracks work anywhere else gets no help from it.
 
 ## Support and contributing
 

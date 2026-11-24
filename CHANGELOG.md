@@ -6,6 +6,34 @@ described in the project documentation.
 
 ## Unreleased
 
+### Added
+
+- `rpiv-todo`'s `rpiv-todo-state` entries are read as list updates, in the current branch and in the
+  previous session file, so a call routed through another tool is not missed.
+- A configuration file that exists but cannot be read now produces one warning instead of failing
+  silently.
+
+### Changed
+
+- A forced turn now needs at least three agent steps since the last list update, so an agent that
+  updates the list at the end of its turn is not sent back to work immediately.
+- Goal detection reads the payload `pi-goal` writes, `{ goal: { status } | null }`, and treats an
+  unrecognised payload as active rather than queueing a second continuation.
+- The previous session is chosen through Pi's own session directory and the newest other file, and
+  the inherited-work notice is only sent on startup or a new session.
+- The previous session file is read with a cap per file and per line.
+
+### Fixed
+
+- Reading a session file that exceeds the byte cap no longer returns an older task list; the file
+  yields no notice.
+- An aborted run no longer asks for a decision: `agent_settled.aborted` and a last assistant message
+  with `stopReason: "aborted"` both suppress the forced turn.
+- A `todo` result that carries `details.error` is no longer treated as a list update, so a failed
+  call does not reset the step count.
+- CI checked files out with CRLF endings on Windows, where `format:check` failed; `.gitattributes`
+  now pins LF.
+
 ## 0.1.0
 
 ### Added
