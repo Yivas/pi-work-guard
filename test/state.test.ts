@@ -71,7 +71,7 @@ test("parseTodoDetails reads the SDK example shape and maps done to completed", 
 test("parseTodoDetails stays silent on unknown shapes and unreadable items", () => {
   assert.equal(parseTodoDetails(null), null);
   assert.equal(parseTodoDetails("tasks"), null);
-  assert.equal(parseTodoDetails({ action: "list" }), null);
+  assert.equal(parseTodoDetails({ action: "create" }), null);
   // No recognised list key, or an item without a numeric id: silence, never an empty list.
   assert.equal(parseTodoDetails({ tasks: [{ subject: "no id", status: "pending" }] }), null);
   assert.equal(
@@ -90,6 +90,16 @@ test("parseTodoDetails ignores a result that reports an error", () => {
     null,
   );
   assert.deepEqual(parseTodoDetails({ tasks: [], error: null }), []);
+});
+
+test("parseTodoDetails ignores a read-only list or get result", () => {
+  // rpiv-todo answers both actions with the same snapshot it persists after a change.
+  const tasks = [{ id: 1, subject: "Unchanged", status: "pending" }];
+  assert.equal(parseTodoDetails({ action: "list", tasks }), null);
+  assert.equal(parseTodoDetails({ action: "get", tasks }), null);
+  assert.deepEqual(parseTodoDetails({ action: "create", tasks }), [
+    { id: 1, subject: "Unchanged", status: "pending" },
+  ]);
 });
 
 test("readTodoSnapshot keeps the last task list and its position", () => {
@@ -142,6 +152,23 @@ test("readTodoSnapshot does not count an errored call as a list update", () => {
   // The step count still runs from the real update, two entries earlier.
   assert.equal(snapshot.lastUpdateIndex, 0);
   assert.equal(countStepsAfter(entries, snapshot.lastUpdateIndex), 2);
+});
+
+test("readTodoSnapshot does not count a read-only call as a list update", () => {
+  const entries: SessionEntryLike[] = [
+    todoResult({ action: "create", tasks: [{ id: 1, subject: "Kept", status: "in_progress" }] }),
+    assistantTurn(),
+    assistantTurn(),
+    todoResult({ action: "list", tasks: [{ id: 1, subject: "Kept", status: "in_progress" }] }),
+    assistantTurn(),
+  ];
+
+  const snapshot = readTodoSnapshot(entries);
+
+  assert.deepEqual(snapshot.items, [{ id: 1, subject: "Kept", status: "in_progress" }]);
+  // Asking for the list neither moves the update nor resets the steps counted since it.
+  assert.equal(snapshot.lastUpdateIndex, 0);
+  assert.equal(countStepsAfter(entries, snapshot.lastUpdateIndex), 3);
 });
 
 test("readTodoSnapshot keeps the previous list when an update cannot be read", () => {

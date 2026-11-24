@@ -63,7 +63,13 @@ function detailsFromLine(line: string): TodoItem[] | null {
   return parseTodoDetails(message.details);
 }
 
-/** Returns the last task list written by a session file, or null when it has none. */
+/**
+ * Returns the last task list written by a session file, or null when it has none.
+ *
+ * A read-only `list` or `get` is skipped like a failed call, for the same reason as on a live
+ * branch: it carries a list but changes nothing. Only the last list is kept here, so dropping a read
+ * that repeats the tasks of the last write cannot change the result.
+ */
 export async function readLastTodoDetails(path: string): Promise<TodoItem[] | null> {
   let latest: TodoItem[] | null = null;
   const stream = createReadStream(path, { encoding: "utf8" });

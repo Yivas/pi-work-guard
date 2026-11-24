@@ -22,6 +22,17 @@ const todoLine = (id: number, status: string): string =>
     },
   });
 
+/** A read-only `todo list` line: it carries the tasks and changes nothing. */
+const todoReadLine = (id: number, status: string): string =>
+  JSON.stringify({
+    type: "message",
+    message: {
+      role: "toolResult",
+      toolName: "todo",
+      details: { action: "list", tasks: [{ id, subject: `Task ${id}`, status }] },
+    },
+  });
+
 const messageLine = (text: string): string =>
   JSON.stringify({
     type: "message",
@@ -54,6 +65,22 @@ test("readLastTodoDetails returns the newest task list in the file", async () =>
 
     assert.deepEqual(await readLastTodoDetails(path), [
       { id: 1, subject: "Task 1", status: "completed" },
+    ]);
+  });
+});
+
+test("readLastTodoDetails keeps the last written list when the file ends with a read", async () => {
+  await withTempDir(async (dir) => {
+    const path = join(dir, "session.jsonl");
+    await writeFile(
+      path,
+      [todoLine(2, "in_progress"), todoReadLine(2, "in_progress"), ""].join("\n"),
+      "utf8",
+    );
+
+    // The read repeats the tasks of the write, so skipping it yields the same list.
+    assert.deepEqual(await readLastTodoDetails(path), [
+      { id: 2, subject: "Task 2", status: "in_progress" },
     ]);
   });
 });

@@ -15,6 +15,8 @@ const TODO_TOOL_NAME = "todo";
 export const TODO_STATE_ENTRY_TYPE = "rpiv-todo-state";
 const GOAL_STATE_ENTRY_TYPE = "goal-state";
 const TODO_STATUSES: readonly TodoStatus[] = ["pending", "in_progress", "completed", "deleted"];
+/** Actions that answer with the list without changing it. */
+const READ_ONLY_TODO_ACTIONS: readonly string[] = ["list", "get"];
 /** Statuses pi-goal writes; anything outside this list is an unknown payload. */
 const GOAL_STATUSES: readonly string[] = [
   "active",
@@ -84,10 +86,19 @@ function normalizeItem(raw: unknown): TodoItem | null {
  *
  * A failed call is one of those cases: `rpiv-todo` reports it in `details.error` and leaves `tasks`
  * as they were, so an error is not a list update and must not reset the step count either.
+ *
+ * A read is the other one. `rpiv-todo` answers `list` and `get` with the same `{ tasks, nextId }`
+ * snapshot it writes after a change, but `changesState` in its reducer reports both as no change,
+ * so a read carries a list without being an update and must not reset the step count. Skipping it
+ * costs nothing to the previous-session file reader either: it keeps only the last list, and a read
+ * repeats the tasks the last write already recorded.
  */
 export function parseTodoDetails(details: unknown): TodoItem[] | null {
   const record = asRecord(details);
   if (!record || record.error != null) {
+    return null;
+  }
+  if (typeof record.action === "string" && READ_ONLY_TODO_ACTIONS.includes(record.action)) {
     return null;
   }
   const rawList = Array.isArray(record.tasks)

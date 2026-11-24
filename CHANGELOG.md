@@ -31,6 +31,8 @@ described in the project documentation.
   with `stopReason: "aborted"` both suppress the forced turn.
 - A `todo` result that carries `details.error` is no longer treated as a list update, so a failed
   call does not reset the step count.
+- A read-only `todo` call (`list` or `get`) is no longer treated as a list update either, so asking
+  for the list does not reset the step count or suppress a reminder and a forced turn.
 - CI checked files out with CRLF endings on Windows, where `format:check` failed; `.gitattributes`
   now pins LF.
 
