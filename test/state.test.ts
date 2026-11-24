@@ -8,7 +8,6 @@ import {
   parseTodoDetails,
   readTodoSnapshot,
   selectPreviousSessionFile,
-  updatedDuringCurrentTurn,
   type SessionEntryLike,
 } from "../src/state.ts";
 
@@ -84,6 +83,15 @@ test("parseTodoDetails stays silent on unknown shapes and unreadable items", () 
   ]);
 });
 
+test("parseTodoDetails ignores a result that reports an error", () => {
+  // rpiv-todo sends the unchanged tasks with `details.error` when a call fails.
+  assert.equal(
+    parseTodoDetails({ tasks: [{ id: 1, subject: "Kept", status: "pending" }], error: "#9 not" }),
+    null,
+  );
+  assert.deepEqual(parseTodoDetails({ tasks: [], error: null }), []);
+});
+
 test("readTodoSnapshot keeps the last task list and its position", () => {
   const entries: SessionEntryLike[] = [
     assistantTurn(),
@@ -115,6 +123,25 @@ test("readTodoSnapshot reads the rpiv-todo-state custom entry when no tool resul
 
   assert.deepEqual(snapshot.items, [{ id: 4, subject: "Routed", status: "in_progress" }]);
   assert.equal(snapshot.lastUpdateIndex, 1);
+});
+
+test("readTodoSnapshot does not count an errored call as a list update", () => {
+  const entries: SessionEntryLike[] = [
+    todoResult({ tasks: [{ id: 1, subject: "Kept", status: "in_progress" }] }),
+    assistantTurn(),
+    todoResult({
+      tasks: [{ id: 1, subject: "Kept", status: "in_progress" }],
+      error: "illegal transition in_progress → in_progress",
+    }),
+    assistantTurn(),
+  ];
+
+  const snapshot = readTodoSnapshot(entries);
+
+  assert.deepEqual(snapshot.items, [{ id: 1, subject: "Kept", status: "in_progress" }]);
+  // The step count still runs from the real update, two entries earlier.
+  assert.equal(snapshot.lastUpdateIndex, 0);
+  assert.equal(countStepsAfter(entries, snapshot.lastUpdateIndex), 2);
 });
 
 test("readTodoSnapshot keeps the previous list when an update cannot be read", () => {
@@ -179,19 +206,6 @@ test("isGoalActive treats an unrecognised goal-state payload as active", () => {
   );
   assert.equal(isGoalActive([goalState({ status: "rewriting" })]), true);
   assert.equal(isGoalActive([{ type: "custom", customType: "goal-state", data: "junk" }]), true);
-});
-
-test("updatedDuringCurrentTurn reports a list touched after the last user message", () => {
-  const entries: SessionEntryLike[] = [
-    userMessage(),
-    todoResult({ tasks: [{ id: 1, subject: "Touched", status: "pending" }] }),
-    assistantTurn(),
-  ];
-
-  assert.equal(updatedDuringCurrentTurn(entries, 1), true);
-  assert.equal(updatedDuringCurrentTurn(entries, 0), false);
-  assert.equal(updatedDuringCurrentTurn(entries, -1), false);
-  assert.equal(updatedDuringCurrentTurn([assistantTurn()], 0), true);
 });
 
 test("lastRunAborted looks at the last assistant message", () => {

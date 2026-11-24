@@ -11,7 +11,8 @@ import { resolve } from "node:path";
 import type { TodoItem, TodoStatus } from "./guard.ts";
 
 const TODO_TOOL_NAME = "todo";
-const TODO_STATE_ENTRY_TYPE = "rpiv-todo-state";
+/** Custom entry `rpiv-todo` appends for every state-changing call. */
+export const TODO_STATE_ENTRY_TYPE = "rpiv-todo-state";
 const GOAL_STATE_ENTRY_TYPE = "goal-state";
 const TODO_STATUSES: readonly TodoStatus[] = ["pending", "in_progress", "completed", "deleted"];
 /** Statuses pi-goal writes; anything outside this list is an unknown payload. */
@@ -80,10 +81,13 @@ function normalizeItem(raw: unknown): TodoItem | null {
  * and the SDK example stores `{ todos, nextId }`. Anything else is ignored instead of guessed,
  * including a list with an item this module cannot read: an unknown payload means silence, and the
  * caller keeps the previous state.
+ *
+ * A failed call is one of those cases: `rpiv-todo` reports it in `details.error` and leaves `tasks`
+ * as they were, so an error is not a list update and must not reset the step count either.
  */
 export function parseTodoDetails(details: unknown): TodoItem[] | null {
   const record = asRecord(details);
-  if (!record) {
+  if (!record || record.error != null) {
     return null;
   }
   const rawList = Array.isArray(record.tasks)
@@ -165,28 +169,6 @@ export function countStepsAfter(entries: readonly SessionEntryLike[], index: num
     }
   }
   return steps;
-}
-
-/** Index of the last user message on the branch, or -1 when the branch has none. */
-function lastUserMessageIndex(entries: readonly SessionEntryLike[]): number {
-  for (let index = entries.length - 1; index >= 0; index -= 1) {
-    const entry = entries[index];
-    if (entry?.type === "message" && entry.message?.role === "user") {
-      return index;
-    }
-  }
-  return -1;
-}
-
-/**
- * Reports whether the task list was touched after the last user message, that is, during the run
- * that just ended. A list the agent has just updated is current by definition.
- */
-export function updatedDuringCurrentTurn(
-  entries: readonly SessionEntryLike[],
-  lastUpdateIndex: number,
-): boolean {
-  return lastUpdateIndex >= 0 && lastUpdateIndex > lastUserMessageIndex(entries);
 }
 
 /** Reports whether the last assistant message on the branch belongs to an aborted run. */

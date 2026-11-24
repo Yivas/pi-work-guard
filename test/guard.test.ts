@@ -31,7 +31,6 @@ function input(overrides: Partial<DecisionInput> = {}): DecisionInput {
     trigger: "stale-check",
     hasActiveGoal: false,
     runAborted: false,
-    taskListUpdatedThisTurn: false,
     forcedTurnsForFingerprint: 0,
     notifiedFingerprint: null,
     ...overrides,
@@ -309,7 +308,9 @@ test("decide notices again when the list changed after a notice", () => {
 });
 
 test("decide suppresses force while a goal is active", () => {
-  const decision = decide(input({ trigger: "agent-settled", hasActiveGoal: true }));
+  const decision = decide(
+    input({ trigger: "agent-settled", hasActiveGoal: true, stepsSinceLastTodoUpdate: 3 }),
+  );
 
   assert.deepEqual(decision, { kind: "none", reason: "goal-active" });
 });
@@ -320,6 +321,7 @@ test("decide forces only when the current session still has work in progress", (
       trigger: "agent-settled",
       sessionOpenItems: [task(1, "pending"), task(2, "pending")],
       openItems: OPEN_TASKS,
+      stepsSinceLastTodoUpdate: 3,
     }),
   );
 
@@ -330,6 +332,7 @@ test("decide forces a follow-up below the forced turn limit", () => {
   const decision = decide(
     input({
       trigger: "agent-settled",
+      stepsSinceLastTodoUpdate: 3,
       forcedTurnsForFingerprint: DEFAULT_CONFIG.maxForcedTurns - 1,
     }),
   );
@@ -342,6 +345,7 @@ test("decide stops forcing at the forced turn limit", () => {
   const decision = decide(
     input({
       trigger: "agent-settled",
+      stepsSinceLastTodoUpdate: 3,
       forcedTurnsForFingerprint: DEFAULT_CONFIG.maxForcedTurns,
     }),
   );
@@ -350,21 +354,30 @@ test("decide stops forcing at the forced turn limit", () => {
 });
 
 test("decide does not force after an aborted run", () => {
-  const decision = decide(input({ trigger: "agent-settled", runAborted: true }));
+  const decision = decide(
+    input({ trigger: "agent-settled", runAborted: true, stepsSinceLastTodoUpdate: 3 }),
+  );
 
   assert.deepEqual(decision, { kind: "none", reason: "run-aborted" });
 });
 
-test("decide does not force when the list was updated during the settling turn", () => {
-  const decision = decide(input({ trigger: "agent-settled", taskListUpdatedThisTurn: true }));
+test("decide does not force when the list was updated as the last action of the turn", () => {
+  const decision = decide(input({ trigger: "agent-settled", stepsSinceLastTodoUpdate: 0 }));
 
-  assert.deepEqual(decision, { kind: "none", reason: "list-updated-this-turn" });
+  assert.deepEqual(decision, { kind: "none", reason: "list-update-too-recent" });
 });
 
-test("decide forces when the list is older than the settling turn", () => {
-  const decision = decide(input({ trigger: "agent-settled", taskListUpdatedThisTurn: false }));
+test("decide does not force after two steps since the list update", () => {
+  const decision = decide(input({ trigger: "agent-settled", stepsSinceLastTodoUpdate: 2 }));
+
+  assert.deepEqual(decision, { kind: "none", reason: "list-update-too-recent" });
+});
+
+test("decide forces after three steps since the list update", () => {
+  const decision = decide(input({ trigger: "agent-settled", stepsSinceLastTodoUpdate: 3 }));
 
   assert.equal(decision.kind, "force");
+  assert.ok(decision.kind === "force" && decision.message.includes("suppressed after 3"));
 });
 
 test("decide reads in_progress from the session items, not from the inherited ones", () => {
@@ -376,6 +389,7 @@ test("decide reads in_progress from the session items, not from the inherited on
       trigger: "agent-settled",
       openItems: [...sessionItems, inherited],
       sessionOpenItems: sessionItems,
+      stepsSinceLastTodoUpdate: 3,
     }),
   );
 

@@ -3,7 +3,7 @@
  */
 
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -23,8 +23,17 @@ import {
 const listWithInProgress = () =>
   todoResult([{ id: 1, subject: "Ship the guard", status: "in_progress" }]);
 
-/** A branch whose list was last touched before the user message, so the settling turn is not fresh. */
-const settledBranch = () => [listWithInProgress(), userMessage(), assistantTurn()];
+const configFileWritten = async (agentDir: string): Promise<boolean> =>
+  (await readdir(agentDir)).includes("work-guard.json");
+
+/** A branch that forces: the item is opened, three tool steps follow, then the session settles. */
+const settledBranch = () => [
+  userMessage(),
+  listWithInProgress(),
+  assistantTurn(),
+  assistantTurn(),
+  assistantTurn(),
+];
 
 test("a non-forcing turn leaves the session untouched", async () => {
   const host = await createHost({ entries: settledBranch() });
@@ -40,6 +49,40 @@ test("a non-forcing turn leaves the session untouched", async () => {
     assert.deepEqual(host.userMessages, []);
     // A missing configuration file is not an error worth reporting.
     assert.deepEqual(host.notifications, []);
+    // Nothing is written to disk either.
+    assert.equal(await configFileWritten(host.agentDir), false);
+  } finally {
+    await host.dispose();
+  }
+});
+
+test("a settle three tool steps after the list update asks for a decision once", async () => {
+  const host = await createHost({ entries: settledBranch() });
+  try {
+    workGuard(host.pi, { agentDir: host.agentDir });
+
+    await host.emit("agent_settled", { type: "agent_settled", aborted: false });
+
+    assert.equal(host.userMessages.length, 1);
+    assert.ok(host.userMessages[0]?.content.includes("#1 [in_progress] Ship the guard"));
+    assert.equal(host.appended.length, 1);
+  } finally {
+    await host.dispose();
+  }
+});
+
+test("no forced turn when the list is updated as the last action of the turn", async () => {
+  const host = await createHost({
+    entries: [userMessage(), listWithInProgress()],
+  });
+  try {
+    workGuard(host.pi, { agentDir: host.agentDir });
+
+    await host.emit("agent_settled", { type: "agent_settled", aborted: false });
+
+    assert.deepEqual(host.userMessages, []);
+    assert.deepEqual(host.appended, []);
+    assert.equal(await configFileWritten(host.agentDir), false);
   } finally {
     await host.dispose();
   }
@@ -76,6 +119,7 @@ test("no forced turn when the session is not interactive", async () => {
 
     assert.deepEqual(host.userMessages, []);
     assert.deepEqual(host.appended, []);
+    assert.equal(await configFileWritten(host.agentDir), false);
   } finally {
     await host.dispose();
   }
@@ -96,7 +140,14 @@ test("no forced turn when Pi reports the run was aborted", async () => {
 
 test("no forced turn when only the last assistant message shows the abort", async () => {
   const host = await createHost({
-    entries: [listWithInProgress(), userMessage(), assistantAbort()],
+    entries: [
+      userMessage(),
+      listWithInProgress(),
+      assistantTurn(),
+      assistantTurn(),
+      assistantTurn(),
+      assistantAbort(),
+    ],
   });
   try {
     workGuard(host.pi, { agentDir: host.agentDir });
@@ -150,6 +201,7 @@ test("the forced-turn counter is restored from its session entry", async () => {
 
     assert.deepEqual(host.userMessages, []);
     assert.deepEqual(host.appended, []);
+    assert.equal(await configFileWritten(host.agentDir), false);
   } finally {
     await host.dispose();
   }

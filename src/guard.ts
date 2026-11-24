@@ -38,6 +38,12 @@ const MAX_SYSTEM_PROMPT_LINES = 8;
 const DEFAULT_LIST_LIMIT = 10;
 
 /**
+ * Agent steps needed after the last list update before an idle session is asked for a decision.
+ * Fixed on purpose: the rule describes what a turn is, not how loud the extension is.
+ */
+const MIN_STEPS_BEFORE_FORCE = 3;
+
+/**
  * Defensive merge over DEFAULT_CONFIG: keeps only known fields of the expected type, and drops
  * non-finite or negative numbers. Anything unusable falls back to the default for that field.
  */
@@ -165,13 +171,12 @@ export interface DecisionInput {
   openItems: readonly TodoItem[];
   /** Items known in the current session only, not inherited from a previous one. */
   sessionOpenItems: readonly TodoItem[];
+  /** Agent steps recorded after the last task list update on the branch. */
   stepsSinceLastTodoUpdate: number;
   trigger: "stale-check" | "session-start" | "compaction" | "agent-settled";
   hasActiveGoal: boolean;
   /** Whether the run that just settled was aborted by the person at the keyboard. */
   runAborted: boolean;
-  /** Whether the task list was updated during the run that just settled. */
-  taskListUpdatedThisTurn: boolean;
   forcedTurnsForFingerprint: number;
   notifiedFingerprint: string | null;
 }
@@ -185,7 +190,6 @@ export function decide(input: DecisionInput): GuardDecision {
     trigger,
     hasActiveGoal,
     runAborted,
-    taskListUpdatedThisTurn,
     forcedTurnsForFingerprint,
     notifiedFingerprint,
   } = input;
@@ -217,7 +221,11 @@ export function decide(input: DecisionInput): GuardDecision {
       if (hasActiveGoal) return { kind: "none", reason: "goal-active" };
       if (runAborted) return { kind: "none", reason: "run-aborted" };
       if (!hasInProgress(sessionOpenItems)) return { kind: "none", reason: "nothing-in-progress" };
-      if (taskListUpdatedThisTurn) return { kind: "none", reason: "list-updated-this-turn" };
+      // Updating the list as the last action of a turn is normal and never forces. The turn worth
+      // catching is the one that marked an item in progress, worked, and settled without closing it.
+      if (stepsSinceLastTodoUpdate < MIN_STEPS_BEFORE_FORCE) {
+        return { kind: "none", reason: "list-update-too-recent" };
+      }
       if (forcedTurnsForFingerprint >= config.maxForcedTurns) {
         return { kind: "none", reason: "forced-turn-limit" };
       }

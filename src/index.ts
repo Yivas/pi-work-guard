@@ -38,7 +38,6 @@ import {
   lastRunAborted,
   readTodoSnapshot,
   selectPreviousSessionFile,
-  updatedDuringCurrentTurn,
   type SessionEntryLike,
 } from "./state.ts";
 
@@ -58,7 +57,6 @@ interface GuardSnapshot {
   stepsSinceUpdate: number;
   goalActive: boolean;
   runAborted: boolean;
-  listUpdatedThisTurn: boolean;
 }
 
 export interface WorkGuardOptions {
@@ -90,7 +88,6 @@ export default function workGuard(pi: ExtensionAPI, options: WorkGuardOptions = 
       stepsSinceUpdate: countStepsAfter(entries, todoState.lastUpdateIndex),
       goalActive: isGoalActive(entries),
       runAborted: lastRunAborted(entries),
-      listUpdatedThisTurn: updatedDuringCurrentTurn(entries, todoState.lastUpdateIndex),
     };
   };
 
@@ -173,7 +170,6 @@ export default function workGuard(pi: ExtensionAPI, options: WorkGuardOptions = 
       trigger: "session-start",
       hasActiveGoal: state.goalActive,
       runAborted: state.runAborted,
-      taskListUpdatedThisTurn: state.listUpdatedThisTurn,
       forcedTurnsForFingerprint: 0,
       notifiedFingerprint: null,
     });
@@ -202,7 +198,6 @@ export default function workGuard(pi: ExtensionAPI, options: WorkGuardOptions = 
       trigger: "compaction",
       hasActiveGoal: state.goalActive,
       runAborted: state.runAborted,
-      taskListUpdatedThisTurn: state.listUpdatedThisTurn,
       forcedTurnsForFingerprint: forced.turns,
       notifiedFingerprint,
     });
@@ -222,7 +217,6 @@ export default function workGuard(pi: ExtensionAPI, options: WorkGuardOptions = 
       trigger: "stale-check",
       hasActiveGoal: state.goalActive,
       runAborted: state.runAborted,
-      taskListUpdatedThisTurn: state.listUpdatedThisTurn,
       forcedTurnsForFingerprint: forced.turns,
       notifiedFingerprint,
     });
@@ -252,7 +246,6 @@ export default function workGuard(pi: ExtensionAPI, options: WorkGuardOptions = 
       trigger: "agent-settled",
       hasActiveGoal: state.goalActive,
       runAborted: settledAborted || state.runAborted,
-      taskListUpdatedThisTurn: state.listUpdatedThisTurn,
       forcedTurnsForFingerprint: forced.turns,
       notifiedFingerprint,
     });
