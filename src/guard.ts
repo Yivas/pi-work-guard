@@ -168,6 +168,10 @@ export interface DecisionInput {
   stepsSinceLastTodoUpdate: number;
   trigger: "stale-check" | "session-start" | "compaction" | "agent-settled";
   hasActiveGoal: boolean;
+  /** Whether the run that just settled was aborted by the person at the keyboard. */
+  runAborted: boolean;
+  /** Whether the task list was updated during the run that just settled. */
+  taskListUpdatedThisTurn: boolean;
   forcedTurnsForFingerprint: number;
   notifiedFingerprint: string | null;
 }
@@ -180,6 +184,8 @@ export function decide(input: DecisionInput): GuardDecision {
     stepsSinceLastTodoUpdate,
     trigger,
     hasActiveGoal,
+    runAborted,
+    taskListUpdatedThisTurn,
     forcedTurnsForFingerprint,
     notifiedFingerprint,
   } = input;
@@ -209,7 +215,9 @@ export function decide(input: DecisionInput): GuardDecision {
     }
     case "agent-settled": {
       if (hasActiveGoal) return { kind: "none", reason: "goal-active" };
+      if (runAborted) return { kind: "none", reason: "run-aborted" };
       if (!hasInProgress(sessionOpenItems)) return { kind: "none", reason: "nothing-in-progress" };
+      if (taskListUpdatedThisTurn) return { kind: "none", reason: "list-updated-this-turn" };
       if (forcedTurnsForFingerprint >= config.maxForcedTurns) {
         return { kind: "none", reason: "forced-turn-limit" };
       }

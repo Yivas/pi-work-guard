@@ -30,6 +30,8 @@ function input(overrides: Partial<DecisionInput> = {}): DecisionInput {
     stepsSinceLastTodoUpdate: 0,
     trigger: "stale-check",
     hasActiveGoal: false,
+    runAborted: false,
+    taskListUpdatedThisTurn: false,
     forcedTurnsForFingerprint: 0,
     notifiedFingerprint: null,
     ...overrides,
@@ -345,6 +347,24 @@ test("decide stops forcing at the forced turn limit", () => {
   );
 
   assert.deepEqual(decision, { kind: "none", reason: "forced-turn-limit" });
+});
+
+test("decide does not force after an aborted run", () => {
+  const decision = decide(input({ trigger: "agent-settled", runAborted: true }));
+
+  assert.deepEqual(decision, { kind: "none", reason: "run-aborted" });
+});
+
+test("decide does not force when the list was updated during the settling turn", () => {
+  const decision = decide(input({ trigger: "agent-settled", taskListUpdatedThisTurn: true }));
+
+  assert.deepEqual(decision, { kind: "none", reason: "list-updated-this-turn" });
+});
+
+test("decide forces when the list is older than the settling turn", () => {
+  const decision = decide(input({ trigger: "agent-settled", taskListUpdatedThisTurn: false }));
+
+  assert.equal(decision.kind, "force");
 });
 
 test("decide reads in_progress from the session items, not from the inherited ones", () => {

@@ -4,7 +4,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { listSessionCandidates, readLastTodoDetails } from "../src/session-file.ts";
+import {
+  MAX_FILE_BYTES,
+  MAX_LINE_BYTES,
+  MAX_SESSION_FILES,
+  listSessionCandidates,
+  readLastTodoDetails,
+} from "../src/session-file.ts";
 
 const todoLine = (id: number, status: string): string =>
   JSON.stringify({
@@ -61,19 +67,43 @@ test("readLastTodoDetails survives a file without a task list", async () => {
   });
 });
 
-test("readLastTodoDetails ignores oversized lines without buffering the conversation", async () => {
+test("readLastTodoDetails skips a line above the per-line cap", async () => {
   await withTempDir(async (dir) => {
     const path = join(dir, "session.jsonl");
-    const huge = JSON.stringify({ type: "message", message: { role: "user", content: "x" } });
+    const oversized = messageLine("y".repeat(MAX_LINE_BYTES));
     await writeFile(
       path,
-      [huge.replace("x", "y".repeat(3)), todoLine(9, "in_progress"), ""].join("\n"),
+      [todoLine(9, "in_progress"), oversized, todoLine(10, "pending"), ""].join("\n"),
       "utf8",
     );
 
     assert.deepEqual(await readLastTodoDetails(path), [
-      { id: 9, subject: "Task 9", status: "in_progress" },
+      { id: 10, subject: "Task 10", status: "pending" },
     ]);
+  });
+});
+
+test("readLastTodoDetails tolerates a truncated trailing line", async () => {
+  await withTempDir(async (dir) => {
+    const path = join(dir, "session.jsonl");
+    const truncated = todoLine(3, "completed").slice(0, 40);
+    await writeFile(path, `${todoLine(2, "in_progress")}\n${truncated}`, "utf8");
+
+    assert.deepEqual(await readLastTodoDetails(path), [
+      { id: 2, subject: "Task 2", status: "in_progress" },
+    ]);
+  });
+});
+
+test("readLastTodoDetails stays silent once the total byte cap is exceeded", async () => {
+  await withTempDir(async (dir) => {
+    const path = join(dir, "session.jsonl");
+    const filler = `${messageLine("z".repeat(64 * 1024))}\n`;
+    const chunks = [filler.repeat(Math.ceil(MAX_FILE_BYTES / filler.length) + 1)];
+    chunks.push(`${todoLine(8, "in_progress")}\n`);
+    await writeFile(path, chunks.join(""), "utf8");
+
+    assert.equal(await readLastTodoDetails(path), null);
   });
 });
 
@@ -108,5 +138,20 @@ test("listSessionCandidates returns jsonl files only", async () => {
     assert.deepEqual(names, ["a.jsonl", "c.jsonl"]);
     assert.ok(candidates.every((candidate) => Number.isFinite(candidate.mtimeMs)));
     assert.deepEqual(await listSessionCandidates(join(dir, "missing")), []);
+  });
+});
+
+test("listSessionCandidates inspects only the newest session files", async () => {
+  await withTempDir(async (dir) => {
+    const total = MAX_SESSION_FILES + 5;
+    for (let index = 0; index < total; index += 1) {
+      const stamp = String(index).padStart(3, "0");
+      await writeFile(join(dir, `2026-01-01T00-00-00-${stamp}Z.jsonl`), "", "utf8");
+    }
+
+    const candidates = await listSessionCandidates(dir);
+
+    assert.equal(candidates.length, MAX_SESSION_FILES);
+    assert.ok(candidates.every((candidate) => Number.isFinite(candidate.mtimeMs)));
   });
 });

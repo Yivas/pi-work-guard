@@ -6,11 +6,23 @@
  * recomputed from the branch, so a reload, a branch switch or a compaction cannot desynchronise it.
  */
 
+import { resolve } from "node:path";
+
 import type { TodoItem, TodoStatus } from "./guard.ts";
 
 const TODO_TOOL_NAME = "todo";
+const TODO_STATE_ENTRY_TYPE = "rpiv-todo-state";
 const GOAL_STATE_ENTRY_TYPE = "goal-state";
 const TODO_STATUSES: readonly TodoStatus[] = ["pending", "in_progress", "completed", "deleted"];
+/** Statuses pi-goal writes; anything outside this list is an unknown payload. */
+const GOAL_STATUSES: readonly string[] = [
+  "active",
+  "paused",
+  "blocked",
+  "usage_limited",
+  "budget_limited",
+  "complete",
+];
 
 /** Structural subset of a Pi session entry that this extension needs. */
 export interface SessionEntryLike {
@@ -22,6 +34,7 @@ export interface SessionEntryLike {
     toolName?: string;
     details?: unknown;
     content?: unknown;
+    stopReason?: string;
   };
 }
 
@@ -64,7 +77,9 @@ function normalizeItem(raw: unknown): TodoItem | null {
  * Reads the task list out of a `todo` tool result.
  *
  * Two shapes are accepted because the tool is replaceable: `rpiv-todo` stores `{ tasks, nextId }`
- * and the SDK example stores `{ todos, nextId }`. Anything else is ignored instead of guessed.
+ * and the SDK example stores `{ todos, nextId }`. Anything else is ignored instead of guessed,
+ * including a list with an item this module cannot read: an unknown payload means silence, and the
+ * caller keeps the previous state.
  */
 export function parseTodoDetails(details: unknown): TodoItem[] | null {
   const record = asRecord(details);
@@ -82,11 +97,32 @@ export function parseTodoDetails(details: unknown): TodoItem[] | null {
   const items: TodoItem[] = [];
   for (const raw of rawList) {
     const item = normalizeItem(raw);
-    if (item) {
-      items.push(item);
+    if (!item) {
+      return null;
     }
+    items.push(item);
   }
   return items;
+}
+
+/**
+ * Payload carried by an entry that may describe the task list, or null when it carries none.
+ *
+ * `rpiv-todo` writes a `toolResult` for every call it runs itself, but a call routed through
+ * another tool produces only the `rpiv-todo-state` custom entry, so both carriers count.
+ */
+function todoDetailsAt(entry: SessionEntryLike): unknown {
+  if (entry.type === "message") {
+    const message = entry.message;
+    if (message?.role === "toolResult" && message.toolName === TODO_TOOL_NAME) {
+      return message.details;
+    }
+    return null;
+  }
+  if (entry.type === "custom" && entry.customType === TODO_STATE_ENTRY_TYPE) {
+    return entry.data;
+  }
+  return null;
 }
 
 /** Replays the branch and returns the task list as of its last update. */
@@ -95,14 +131,7 @@ export function readTodoSnapshot(entries: readonly SessionEntryLike[]): TodoSnap
   let lastUpdateIndex = -1;
 
   entries.forEach((entry, index) => {
-    if (entry.type !== "message") {
-      return;
-    }
-    const message = entry.message;
-    if (!message || message.role !== "toolResult" || message.toolName !== TODO_TOOL_NAME) {
-      return;
-    }
-    const parsed = parseTodoDetails(message.details);
+    const parsed = parseTodoDetails(todoDetailsAt(entry));
     if (parsed) {
       items = parsed;
       lastUpdateIndex = index;
@@ -138,8 +167,65 @@ export function countStepsAfter(entries: readonly SessionEntryLike[], index: num
   return steps;
 }
 
+/** Index of the last user message on the branch, or -1 when the branch has none. */
+function lastUserMessageIndex(entries: readonly SessionEntryLike[]): number {
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const entry = entries[index];
+    if (entry?.type === "message" && entry.message?.role === "user") {
+      return index;
+    }
+  }
+  return -1;
+}
+
 /**
- * Reports whether pi-goal currently owns continuation in this session.
+ * Reports whether the task list was touched after the last user message, that is, during the run
+ * that just ended. A list the agent has just updated is current by definition.
+ */
+export function updatedDuringCurrentTurn(
+  entries: readonly SessionEntryLike[],
+  lastUpdateIndex: number,
+): boolean {
+  return lastUpdateIndex >= 0 && lastUpdateIndex > lastUserMessageIndex(entries);
+}
+
+/** Reports whether the last assistant message on the branch belongs to an aborted run. */
+export function lastRunAborted(entries: readonly SessionEntryLike[]): boolean {
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const entry = entries[index];
+    if (entry?.type !== "message" || entry.message?.role !== "assistant") {
+      continue;
+    }
+    return entry.message.stopReason === "aborted";
+  }
+  return false;
+}
+
+/**
+ * Reads one `goal-state` payload written by pi-goal.
+ *
+ * The payload is `{ goal: { status, ... } | null }`, where `null` means the goal was cleared. An
+ * unrecognised payload is reported as active: guessing "inactive" there would queue a second
+ * continuation next to pi-goal's own.
+ */
+function goalEntryIsActive(data: unknown): boolean {
+  const record = asRecord(data);
+  if (!record || !("goal" in record)) {
+    return true;
+  }
+  if (record.goal === null) {
+    return false;
+  }
+  const status = asRecord(record.goal)?.status;
+  if (typeof status !== "string" || !GOAL_STATUSES.includes(status)) {
+    return true;
+  }
+  return status === "active";
+}
+
+/**
+ * Reports whether pi-goal currently owns continuation in this session, taking the last
+ * `goal-state` entry on the branch as the answer.
  *
  * When a goal is active, pi-goal already continues from the settled boundary, so the guard must
  * stay out of the way instead of queueing a second continuation.
@@ -150,14 +236,9 @@ export function isGoalActive(entries: readonly SessionEntryLike[]): boolean {
     if (entry.type !== "custom" || entry.customType !== GOAL_STATE_ENTRY_TYPE) {
       continue;
     }
-    active = asRecord(entry.data)?.status === "active";
+    active = goalEntryIsActive(entry.data);
   }
   return active;
-}
-
-/** Session files are grouped per working directory in the agent directory. */
-export function sanitizeProjectDirName(cwd: string): string {
-  return `--${cwd.replace(/[^A-Za-z0-9.-]/g, "-")}--`;
 }
 
 export interface SessionFileCandidate {
@@ -165,14 +246,23 @@ export interface SessionFileCandidate {
   mtimeMs: number;
 }
 
-/** Picks the most recent session file written before the current session started. */
+/**
+ * Paths are compared resolved, and case-insensitively on Windows, where one file has two spellings.
+ */
+function pathKey(path: string): string {
+  const resolved = resolve(path);
+  return process.platform === "win32" ? resolved.toLowerCase() : resolved;
+}
+
+/** Picks the most recent session file that is not the current one. */
 export function selectPreviousSessionFile(
   candidates: readonly SessionFileCandidate[],
-  currentSessionStartedAt: number,
+  currentSessionFile: string | null,
 ): string | null {
+  const current = currentSessionFile ? pathKey(currentSessionFile) : null;
   let best: SessionFileCandidate | null = null;
   for (const candidate of candidates) {
-    if (candidate.mtimeMs >= currentSessionStartedAt) {
+    if (current !== null && pathKey(candidate.path) === current) {
       continue;
     }
     if (!best || candidate.mtimeMs > best.mtimeMs) {

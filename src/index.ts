@@ -6,8 +6,10 @@
  * injects a reminder; when the agent goes idle with work still marked in progress, it asks for an
  * explicit decision instead of letting the turn end quietly.
  *
- * Everything runs locally. There is no network access, no telemetry, and the only file written is
- * the extension's own configuration under the agent directory.
+ * Everything runs locally. There is no network access and no telemetry. The extension writes two
+ * things: its own configuration under the agent directory, and entries of its own inside the
+ * current session — a `custom_message` per notice and a `work-guard-state` counter entry, the
+ * latter only when it forces a turn.
  */
 
 import { readFileSync, writeFileSync } from "node:fs";
@@ -33,9 +35,10 @@ import { listSessionCandidates, readLastTodoDetails } from "./session-file.ts";
 import {
   countStepsAfter,
   isGoalActive,
+  lastRunAborted,
   readTodoSnapshot,
-  sanitizeProjectDirName,
   selectPreviousSessionFile,
+  updatedDuringCurrentTurn,
   type SessionEntryLike,
 } from "./state.ts";
 
@@ -54,28 +57,24 @@ interface GuardSnapshot {
   openList: TodoItem[];
   stepsSinceUpdate: number;
   goalActive: boolean;
+  runAborted: boolean;
+  listUpdatedThisTurn: boolean;
 }
 
-function readConfig(): GuardConfig {
-  try {
-    const raw = readFileSync(join(getAgentDir(), CONFIG_FILE_NAME), "utf8");
-    return normalizeConfig(JSON.parse(raw) as unknown);
-  } catch {
-    return DEFAULT_CONFIG;
-  }
+export interface WorkGuardOptions {
+  /** Directory holding `work-guard.json`; defaults to Pi's agent directory. */
+  agentDir?: string;
 }
 
-function writeConfig(config: GuardConfig): void {
-  writeFileSync(
-    join(getAgentDir(), CONFIG_FILE_NAME),
-    `${JSON.stringify(config, null, 2)}\n`,
-    "utf8",
-  );
+/** The inherited-work notice belongs to a fresh session, never to a resumed or forked one. */
+function isFreshSessionStart(reason: string): boolean {
+  return reason === "startup" || reason === "new";
 }
 
-export default function workGuard(pi: ExtensionAPI) {
+export default function workGuard(pi: ExtensionAPI, options: WorkGuardOptions = {}) {
+  const configPath = join(options.agentDir ?? getAgentDir(), CONFIG_FILE_NAME);
   let config = DEFAULT_CONFIG;
-  let sessionStartedAt = Date.now();
+  let configWarningShown = false;
   let forced: ForcedTurnState = { fingerprint: null, turns: 0 };
   let notifiedFingerprint: string | null = null;
   let inheritedItems: TodoItem[] = [];
@@ -90,7 +89,29 @@ export default function workGuard(pi: ExtensionAPI) {
       openList: openItems(todoState.items),
       stepsSinceUpdate: countStepsAfter(entries, todoState.lastUpdateIndex),
       goalActive: isGoalActive(entries),
+      runAborted: lastRunAborted(entries),
+      listUpdatedThisTurn: updatedDuringCurrentTurn(entries, todoState.lastUpdateIndex),
     };
+  };
+
+  const readConfig = (ctx: ExtensionContext): GuardConfig => {
+    try {
+      return normalizeConfig(JSON.parse(readFileSync(configPath, "utf8")) as unknown);
+    } catch (error) {
+      const missing = (error as NodeJS.ErrnoException | null)?.code === "ENOENT";
+      if (!missing && !configWarningShown) {
+        configWarningShown = true;
+        ctx.ui?.notify?.(
+          `work-guard could not read ${CONFIG_FILE_NAME}; using defaults.`,
+          "warning",
+        );
+      }
+      return DEFAULT_CONFIG;
+    }
+  };
+
+  const writeConfig = (): void => {
+    writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
   };
 
   const refreshBlock = (state: GuardSnapshot): void => {
@@ -111,10 +132,16 @@ export default function workGuard(pi: ExtensionAPI) {
     }
   };
 
-  const loadPreviousItems = async (ctx: ExtensionContext): Promise<TodoItem[]> => {
-    const directory = join(getAgentDir(), "sessions", sanitizeProjectDirName(ctx.cwd));
-    const candidates = await listSessionCandidates(directory);
-    const previous = selectPreviousSessionFile(candidates, sessionStartedAt);
+  const findPreviousSessionFile = async (ctx: ExtensionContext): Promise<string | null> => {
+    const candidates = await listSessionCandidates(ctx.sessionManager.getSessionDir());
+    return selectPreviousSessionFile(candidates, ctx.sessionManager.getSessionFile() ?? null);
+  };
+
+  const loadInheritedItems = async (
+    ctx: ExtensionContext,
+    previousSessionFile?: string,
+  ): Promise<TodoItem[]> => {
+    const previous = previousSessionFile ?? (await findPreviousSessionFile(ctx));
     if (!previous) {
       return [];
     }
@@ -129,14 +156,15 @@ export default function workGuard(pi: ExtensionAPI) {
     );
   };
 
-  pi.on("session_start", async (_event, ctx) => {
-    sessionStartedAt = Date.now();
-    config = readConfig();
+  pi.on("session_start", async (event, ctx) => {
+    config = readConfig(ctx);
     const state = snapshot(ctx);
     restoreForcedTurns(state.entries);
     refreshBlock(state);
 
-    inheritedItems = await loadPreviousItems(ctx);
+    inheritedItems = isFreshSessionStart(event.reason)
+      ? await loadInheritedItems(ctx, event.previousSessionFile)
+      : [];
     const decision = decide({
       config,
       openItems: inheritedItems,
@@ -144,6 +172,8 @@ export default function workGuard(pi: ExtensionAPI) {
       stepsSinceLastTodoUpdate: state.stepsSinceUpdate,
       trigger: "session-start",
       hasActiveGoal: state.goalActive,
+      runAborted: state.runAborted,
+      taskListUpdatedThisTurn: state.listUpdatedThisTurn,
       forcedTurnsForFingerprint: 0,
       notifiedFingerprint: null,
     });
@@ -171,6 +201,8 @@ export default function workGuard(pi: ExtensionAPI) {
       stepsSinceLastTodoUpdate: state.stepsSinceUpdate,
       trigger: "compaction",
       hasActiveGoal: state.goalActive,
+      runAborted: state.runAborted,
+      taskListUpdatedThisTurn: state.listUpdatedThisTurn,
       forcedTurnsForFingerprint: forced.turns,
       notifiedFingerprint,
     });
@@ -189,6 +221,8 @@ export default function workGuard(pi: ExtensionAPI) {
       stepsSinceLastTodoUpdate: state.stepsSinceUpdate,
       trigger: "stale-check",
       hasActiveGoal: state.goalActive,
+      runAborted: state.runAborted,
+      taskListUpdatedThisTurn: state.listUpdatedThisTurn,
       forcedTurnsForFingerprint: forced.turns,
       notifiedFingerprint,
     });
@@ -198,7 +232,7 @@ export default function workGuard(pi: ExtensionAPI) {
     }
   });
 
-  pi.on("agent_settled", async (_event, ctx) => {
+  pi.on("agent_settled", async (event, ctx) => {
     const state = snapshot(ctx);
     refreshBlock(state);
 
@@ -207,6 +241,9 @@ export default function workGuard(pi: ExtensionAPI) {
       forced = { fingerprint: currentFingerprint, turns: 0 };
     }
 
+    // `aborted` only exists on newer Pi releases; older ones leave the field undefined.
+    const settledAborted = (event as { aborted?: unknown }).aborted === true;
+
     const decision = decide({
       config,
       openItems: state.openList,
@@ -214,6 +251,8 @@ export default function workGuard(pi: ExtensionAPI) {
       stepsSinceLastTodoUpdate: state.stepsSinceUpdate,
       trigger: "agent-settled",
       hasActiveGoal: state.goalActive,
+      runAborted: settledAborted || state.runAborted,
+      taskListUpdatedThisTurn: state.listUpdatedThisTurn,
       forcedTurnsForFingerprint: forced.turns,
       notifiedFingerprint,
     });
@@ -243,7 +282,7 @@ export default function workGuard(pi: ExtensionAPI) {
 
       if (action === "on" || action === "off") {
         config = { ...config, enabled: action === "on" };
-        writeConfig(config);
+        writeConfig();
         refreshBlock(snapshot(ctx));
         ctx.ui.notify(`work-guard is now ${config.enabled ? "on" : "off"}`, "info");
         return;

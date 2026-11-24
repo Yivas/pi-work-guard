@@ -4,10 +4,11 @@ import test from "node:test";
 import {
   countStepsAfter,
   isGoalActive,
+  lastRunAborted,
   parseTodoDetails,
   readTodoSnapshot,
-  sanitizeProjectDirName,
   selectPreviousSessionFile,
+  updatedDuringCurrentTurn,
   type SessionEntryLike,
 } from "../src/state.ts";
 
@@ -24,6 +25,18 @@ const assistantTurn = (): SessionEntryLike => ({
 const assistantText = (): SessionEntryLike => ({
   type: "message",
   message: { role: "assistant", content: [{ type: "text", text: "Working on it" }] },
+});
+
+const userMessage = (): SessionEntryLike => ({
+  type: "message",
+  message: { role: "user", content: [{ type: "text", text: "Go on" }] },
+});
+
+/** One `goal-state` entry as pi-goal 0.55.3 appends it. */
+const goalState = (goal: unknown): SessionEntryLike => ({
+  type: "custom",
+  customType: "goal-state",
+  data: { goal },
 });
 
 test("parseTodoDetails reads the rpiv-todo shape", () => {
@@ -56,11 +69,16 @@ test("parseTodoDetails reads the SDK example shape and maps done to completed", 
   ]);
 });
 
-test("parseTodoDetails ignores unknown shapes and unusable items", () => {
+test("parseTodoDetails stays silent on unknown shapes and unreadable items", () => {
   assert.equal(parseTodoDetails(null), null);
   assert.equal(parseTodoDetails("tasks"), null);
   assert.equal(parseTodoDetails({ action: "list" }), null);
-  assert.deepEqual(parseTodoDetails({ tasks: [{ subject: "no id", status: "pending" }] }), []);
+  // No recognised list key, or an item without a numeric id: silence, never an empty list.
+  assert.equal(parseTodoDetails({ tasks: [{ subject: "no id", status: "pending" }] }), null);
+  assert.equal(
+    parseTodoDetails({ tasks: [{ id: 1, subject: "ok", status: "pending" }, "nonsense"] }),
+    null,
+  );
   assert.deepEqual(parseTodoDetails({ tasks: [{ id: 1, subject: "x", status: "weird" }] }), [
     { id: 1, subject: "x", status: "pending" },
   ]);
@@ -80,6 +98,36 @@ test("readTodoSnapshot keeps the last task list and its position", () => {
 
   assert.deepEqual(snapshot.items, [{ id: 1, subject: "First", status: "completed" }]);
   assert.equal(snapshot.lastUpdateIndex, 4);
+});
+
+test("readTodoSnapshot reads the rpiv-todo-state custom entry when no tool result exists", () => {
+  const entries: SessionEntryLike[] = [
+    assistantTurn(),
+    {
+      type: "custom",
+      customType: "rpiv-todo-state",
+      data: { action: "update", tasks: [{ id: 4, subject: "Routed", status: "in_progress" }] },
+    },
+    assistantTurn(),
+  ];
+
+  const snapshot = readTodoSnapshot(entries);
+
+  assert.deepEqual(snapshot.items, [{ id: 4, subject: "Routed", status: "in_progress" }]);
+  assert.equal(snapshot.lastUpdateIndex, 1);
+});
+
+test("readTodoSnapshot keeps the previous list when an update cannot be read", () => {
+  const entries: SessionEntryLike[] = [
+    todoResult({ tasks: [{ id: 1, subject: "Kept", status: "pending" }] }),
+    assistantTurn(),
+    todoResult({ tasks: [{ subject: "no id", status: "pending" }] }),
+  ];
+
+  const snapshot = readTodoSnapshot(entries);
+
+  assert.deepEqual(snapshot.items, [{ id: 1, subject: "Kept", status: "pending" }]);
+  assert.equal(snapshot.lastUpdateIndex, 0);
 });
 
 test("readTodoSnapshot returns an empty list on a branch without a todo tool", () => {
@@ -102,40 +150,93 @@ test("countStepsAfter counts only assistant turns with tool calls", () => {
   assert.equal(countStepsAfter(entries, -1), 0);
 });
 
-test("isGoalActive follows the last goal-state entry", () => {
+test("isGoalActive reads the real pi-goal payload", () => {
+  assert.equal(isGoalActive([goalState({ status: "active" })]), true);
+  assert.equal(isGoalActive([goalState({ status: "paused" })]), false);
+  assert.equal(isGoalActive([goalState({ status: "blocked" })]), false);
+  assert.equal(isGoalActive([goalState({ status: "usage_limited" })]), false);
+  assert.equal(isGoalActive([goalState({ status: "budget_limited" })]), false);
+  assert.equal(isGoalActive([goalState({ status: "complete" })]), false);
+  assert.equal(isGoalActive([goalState(null)]), false);
+  assert.equal(isGoalActive([]), false);
+  assert.equal(isGoalActive([{ type: "custom", customType: "unrelated", data: {} }]), false);
+});
+
+test("isGoalActive follows the last goal-state entry on the branch", () => {
+  assert.equal(isGoalActive([goalState({ status: "active" }), goalState(null)]), false);
+  assert.equal(isGoalActive([goalState(null), goalState({ status: "active" })]), true);
+  assert.equal(
+    isGoalActive([goalState({ status: "active" }), goalState({ status: "complete" })]),
+    false,
+  );
+});
+
+test("isGoalActive treats an unrecognised goal-state payload as active", () => {
+  assert.equal(isGoalActive([{ type: "custom", customType: "goal-state" }]), true);
   assert.equal(
     isGoalActive([{ type: "custom", customType: "goal-state", data: { status: "active" } }]),
     true,
   );
+  assert.equal(isGoalActive([goalState({ status: "rewriting" })]), true);
+  assert.equal(isGoalActive([{ type: "custom", customType: "goal-state", data: "junk" }]), true);
+});
+
+test("updatedDuringCurrentTurn reports a list touched after the last user message", () => {
+  const entries: SessionEntryLike[] = [
+    userMessage(),
+    todoResult({ tasks: [{ id: 1, subject: "Touched", status: "pending" }] }),
+    assistantTurn(),
+  ];
+
+  assert.equal(updatedDuringCurrentTurn(entries, 1), true);
+  assert.equal(updatedDuringCurrentTurn(entries, 0), false);
+  assert.equal(updatedDuringCurrentTurn(entries, -1), false);
+  assert.equal(updatedDuringCurrentTurn([assistantTurn()], 0), true);
+});
+
+test("lastRunAborted looks at the last assistant message", () => {
+  assert.equal(lastRunAborted([]), false);
+  assert.equal(lastRunAborted([userMessage(), assistantText()]), false);
   assert.equal(
-    isGoalActive([
-      { type: "custom", customType: "goal-state", data: { status: "active" } },
-      { type: "custom", customType: "goal-state", data: { status: "complete" } },
+    lastRunAborted([
+      { type: "message", message: { role: "assistant", content: [], stopReason: "aborted" } },
+    ]),
+    true,
+  );
+  // Only the newest assistant message counts; an older abort does not outlive the turn.
+  assert.equal(
+    lastRunAborted([
+      { type: "message", message: { role: "assistant", content: [], stopReason: "aborted" } },
+      assistantText(),
     ]),
     false,
   );
-  assert.equal(isGoalActive([{ type: "custom", customType: "unrelated", data: {} }]), false);
 });
 
-test("sanitizeProjectDirName matches the directory names Pi creates", () => {
-  assert.equal(
-    sanitizeProjectDirName("D:\\Documents\\1.Codigo\\yivas-hermes-workbench-ia"),
-    "--D--Documents-1.Codigo-yivas-hermes-workbench-ia--",
-  );
-  assert.equal(
-    sanitizeProjectDirName("D:\\Documents\\1.Codigo\\prompt-vault"),
-    "--D--Documents-1.Codigo-prompt-vault--",
-  );
-});
-
-test("selectPreviousSessionFile ignores the running session and picks the newest older file", () => {
+test("selectPreviousSessionFile skips the running session and picks the newest other file", () => {
   const candidates = [
     { path: "old.jsonl", mtimeMs: 1_000 },
     { path: "middle.jsonl", mtimeMs: 2_000 },
     { path: "current.jsonl", mtimeMs: 5_000 },
   ];
 
-  assert.equal(selectPreviousSessionFile(candidates, 3_000), "middle.jsonl");
-  assert.equal(selectPreviousSessionFile(candidates, 1_000), null);
-  assert.equal(selectPreviousSessionFile([], 3_000), null);
+  assert.equal(selectPreviousSessionFile(candidates, "current.jsonl"), "middle.jsonl");
+  assert.equal(selectPreviousSessionFile(candidates, null), "current.jsonl");
+  assert.equal(selectPreviousSessionFile([], "current.jsonl"), null);
 });
+
+test(
+  "selectPreviousSessionFile matches the running session case-insensitively on Windows",
+  { skip: process.platform !== "win32" },
+  () => {
+    const candidates = [
+      { path: "C:\\Sessions\\OLD.jsonl", mtimeMs: 1_000 },
+      { path: "C:\\Sessions\\Current.jsonl", mtimeMs: 5_000 },
+    ];
+
+    assert.equal(
+      selectPreviousSessionFile(candidates, "c:\\sessions\\current.jsonl"),
+      "C:\\Sessions\\OLD.jsonl",
+    );
+  },
+);
