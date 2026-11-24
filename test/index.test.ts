@@ -13,6 +13,7 @@ import {
   assistantAbort,
   assistantTurn,
   createHost,
+  type FakeHost,
   goalState,
   todoResult,
   todoSessionLine,
@@ -23,8 +24,13 @@ import {
 const listWithInProgress = () =>
   todoResult([{ id: 1, subject: "Ship the guard", status: "in_progress" }]);
 
-const configFileWritten = async (agentDir: string): Promise<boolean> =>
-  (await readdir(agentDir)).includes("work-guard.json");
+/**
+ * Reports whether the extension wrote anything: its configuration in the agent directory, or any
+ * file at all in the project working directory.
+ */
+const nothingWritten = async (host: FakeHost): Promise<boolean> =>
+  !(await readdir(host.agentDir)).includes("work-guard.json") &&
+  (await readdir(host.cwd)).length === 0;
 
 /** A branch that forces: the item is opened, three tool steps follow, then the session settles. */
 const settledBranch = () => [
@@ -50,7 +56,7 @@ test("a non-forcing turn leaves the session untouched", async () => {
     // A missing configuration file is not an error worth reporting.
     assert.deepEqual(host.notifications, []);
     // Nothing is written to disk either.
-    assert.equal(await configFileWritten(host.agentDir), false);
+    assert.ok(await nothingWritten(host));
   } finally {
     await host.dispose();
   }
@@ -82,7 +88,7 @@ test("no forced turn when the list is updated as the last action of the turn", a
 
     assert.deepEqual(host.userMessages, []);
     assert.deepEqual(host.appended, []);
-    assert.equal(await configFileWritten(host.agentDir), false);
+    assert.ok(await nothingWritten(host));
   } finally {
     await host.dispose();
   }
@@ -119,7 +125,7 @@ test("no forced turn when the session is not interactive", async () => {
 
     assert.deepEqual(host.userMessages, []);
     assert.deepEqual(host.appended, []);
-    assert.equal(await configFileWritten(host.agentDir), false);
+    assert.ok(await nothingWritten(host));
   } finally {
     await host.dispose();
   }
@@ -201,7 +207,7 @@ test("the forced-turn counter is restored from its session entry", async () => {
 
     assert.deepEqual(host.userMessages, []);
     assert.deepEqual(host.appended, []);
-    assert.equal(await configFileWritten(host.agentDir), false);
+    assert.ok(await nothingWritten(host));
   } finally {
     await host.dispose();
   }

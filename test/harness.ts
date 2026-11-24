@@ -6,7 +6,7 @@
  * touches a real Pi session or the real agent directory.
  */
 
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -40,6 +40,8 @@ export interface FakeHostOptions {
 export interface FakeHost {
   pi: ExtensionAPI;
   agentDir: string;
+  /** Working directory handed to the extension, left empty so a write into it is visible. */
+  cwd: string;
   sessionDir: string;
   entries: SessionEntryLike[];
   customMessages: SentCustomMessage[];
@@ -53,7 +55,9 @@ export interface FakeHost {
 
 export async function createHost(options: FakeHostOptions = {}): Promise<FakeHost> {
   const agentDir = await mkdtemp(join(tmpdir(), "work-guard-host-"));
+  const cwd = join(agentDir, "project");
   const sessionDir = options.sessionDir ?? join(agentDir, "sessions");
+  await mkdir(cwd, { recursive: true });
   const entries = options.entries ?? [];
   const customMessages: SentCustomMessage[] = [];
   const userMessages: SentUserMessage[] = [];
@@ -63,7 +67,7 @@ export async function createHost(options: FakeHostOptions = {}): Promise<FakeHos
   const commands = new Map<string, { handler: (args: string, ctx: ExtensionContext) => unknown }>();
 
   const ctx = {
-    cwd: join(agentDir, "project"),
+    cwd,
     hasUI: options.hasUI ?? true,
     ui: {
       notify: (message: string, type?: string) => {
@@ -103,6 +107,7 @@ export async function createHost(options: FakeHostOptions = {}): Promise<FakeHos
   return {
     pi,
     agentDir,
+    cwd,
     sessionDir,
     entries,
     customMessages,
