@@ -1,0 +1,4 @@
+# Store text in the repository and check it out with LF endings on every platform.
+# Without this, Git on Windows checks out CRLF and Prettier's `endOfLine: "lf"`
+# default fails `npm run format:check` there.
+* text=auto eol=lf
